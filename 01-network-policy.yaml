@@ -1,0 +1,106 @@
+# Scenario 1: Zero-trust networking in app-demo.
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium, Azure NPM, ...).
+# Flow after applying:  internet -> nodeapp:3000 -> postgres:5432. Everything else is denied.
+
+# Deny all ingress and egress for every pod in the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: app-demo
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Allow inbound traffic to the app (via the LoadBalancer/Ingress) on port 3000
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-app
+  namespace: app-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: nodeapp
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 3000
+---
+# App egress: DNS + PostgreSQL only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-egress
+  namespace: app-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: nodeapp
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+---
+# Postgres accepts connections only from the app and the backup job
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-clients
+  namespace: app-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: nodeapp
+        - podSelector:
+            matchLabels:
+              app: pg-backup
+      ports:
+        - port: 5432
+---
+# Backup job egress: DNS + PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-egress
+  namespace: app-demo
+spec:
+  podSelector:
+    matchLabels:
+      app: pg-backup
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432

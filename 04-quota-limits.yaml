@@ -1,0 +1,38 @@
+# Scenario 4: Namespace guardrails.
+# Apply the LimitRange FIRST. With a compute ResourceQuota, every container must
+# declare requests/limits; the busybox init container in app-deployment.yaml does
+# not, so without these defaults its pods are rejected.
+
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: app-demo-defaults
+  namespace: app-demo
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      default:
+        cpu: 200m
+        memory: 128Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: app-demo-quota
+  namespace: app-demo
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "3"
+    requests.memory: 3Gi
+    limits.cpu: "6"            # HPA max 6 x 500m + postgres 500m + canary/backup headroom
+    limits.memory: 6Gi
+    persistentvolumeclaims: "3"
+    requests.storage: 10Gi
+    services.loadbalancers: "1"

@@ -1,0 +1,75 @@
+# Scenario 7: Simple canary release using replica ratios.
+# app-service selects `app: nodeapp`, which both the stable Deployment (2 replicas)
+# and this canary (1 replica) carry, so roughly 1/3 of requests hit the new version.
+#
+# Promote:  update the stable Deployment image, then delete the canary.
+# Roll back: kubectl delete deployment app-canary -n app-demo
+#
+# Note: if the HPA from scenario 2 is active it only scales `app`, so the ratio shifts
+# as `app` scales. For exact percentages use an Ingress canary or a service mesh.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-canary
+  namespace: app-demo
+  labels:
+    app: nodeapp
+    track: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nodeapp
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: nodeapp               # matched by app-service
+        track: canary
+    spec:
+      serviceAccountName: nodeapp-sa
+      containers:
+        - name: nodeapp
+          image: sravangcpdocker/nodeapp:v2   # the new version under test
+          ports:
+            - containerPort: 3000
+          env:
+            - name: DB_HOST
+              value: "postgres-service"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10

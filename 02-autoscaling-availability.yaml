@@ -1,0 +1,47 @@
+# Scenario 2: Autoscaling and availability for the app.
+# HPA needs metrics-server (built in on AKS/GKE/EKS add-on; `minikube addons enable metrics-server`).
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: app-hpa
+  namespace: app-demo
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: app
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70      # percent of the 100m CPU request
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300  # avoid flapping
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+# Keep at least one app pod up during node drains / cluster upgrades
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: app-pdb
+  namespace: app-demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nodeapp

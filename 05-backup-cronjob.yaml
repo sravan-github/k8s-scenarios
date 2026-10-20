@@ -1,0 +1,78 @@
+# Scenario 5: Scheduled PostgreSQL backups with a CronJob.
+# Dumps appdb nightly to a separate PVC and keeps the 7 newest files.
+# Credentials come from the existing postgres-secret.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+  namespace: app-demo
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: app-demo
+spec:
+  schedule: "0 2 * * *"            # 02:00 daily (cluster time zone, usually UTC)
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: pg-backup          # matched by the NetworkPolicies in scenario 1
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  FILE=/backup/appdb-$(date +%Y%m%d-%H%M%S).sql.gz
+                  pg_dump -h postgres-service -U "$POSTGRES_USER" "$POSTGRES_DB" | gzip > "$FILE"
+                  echo "Wrote $FILE"
+                  ls -1t /backup/appdb-*.sql.gz | tail -n +8 | xargs -r rm --
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc
